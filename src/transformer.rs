@@ -97,10 +97,11 @@ impl RunState {
 }
 
 impl TransformerWeights {
-    pub fn new(model_file: &mut std::fs::File, config: &Config) -> io::Result<Self> {
+    pub fn new(model_file: &mut std::fs::File, config: &mut Config) -> io::Result<Self> {
         let model_file_size = model_file.metadata()?.len();
         // println!("{:?}", model_file_size);
         let shared_weights = config.vocab_size > 0;
+        config.vocab_size = config.vocab_size.abs();
 
         let head_size = config.dim / config.n_heads;
 
@@ -184,10 +185,10 @@ impl Transformer {
     pub fn new(model_file_path: &str) -> io::Result<Self> {
         let mut model_file = File::open(model_file_path)?;
 
-        let config = read_file_to_struct::<Config>(&mut model_file)?;
+        let mut config = read_file_to_struct::<Config>(&mut model_file)?;
         println!("{:?}", config);
 
-        let transformer_weights = TransformerWeights::new(&mut model_file, &config)?;
+        let transformer_weights = TransformerWeights::new(&mut model_file, &mut config)?;
         let state = RunState::new(&config)?;
 
         Ok(Transformer {
