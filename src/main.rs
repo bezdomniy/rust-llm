@@ -15,18 +15,20 @@ fn main() -> io::Result<()> {
 
     let vocab_size = transformer.config.vocab_size;
     let tokenizer = tokenizer::Tokenizer::new("assets/tokenizer.bin", vocab_size as u32)?;
-    // println!("{:?}", tokenizer?.vocab);
-    // tokenizer.encode(
-    //     &"\x00\x01\x02ыцö加y̆a\r\nb🇷🇺🇸🇹".to_string(),
-    //     &transformer.config,
-    // );
 
     tokenizer.encode(
-        &"\x00\x01\x02ыцö加y̆a\r\nb".to_string(),
+        &"transformers applications terminators".to_string(),
         true,
         false,
         &transformer.config,
     );
+
+    // tokenizer.encode(
+    //     &"\x00\x01\x02ыцö加y̆a\r\nb".to_string(),
+    //     true,
+    //     false,
+    //     &transformer.config,
+    // );
 
     let sampler = Sampler {
         rng_state: 0,
