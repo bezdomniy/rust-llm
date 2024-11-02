@@ -1,4 +1,5 @@
 use crate::utils;
+use std::error::Error;
 use std::fs::File;
 use std::io::{self, Read};
 
@@ -44,5 +45,9 @@ impl Tokenizer {
             vocab_size,
             vocab_sorted: vocab_sorted.into_boxed_slice(),
         })
+    }
+
+    pub fn encode(prompt: &String) -> Result<Vec<usize>, String> {
+        todo!()
     }
 }

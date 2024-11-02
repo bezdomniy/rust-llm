@@ -2,6 +2,7 @@ use crate::utils::{read_file_to_struct, read_variable_length_data};
 use bytemuck::{Pod, Zeroable};
 use std::fs::File;
 use std::io::{self, Seek};
+use std::sync::Arc;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable, Debug)]
@@ -18,7 +19,7 @@ pub struct Config {
 #[derive(Debug)]
 pub struct TransformerWeights {
     // token embedding table
-    pub token_embedding_table: Box<[f32]>, // (vocab_size, dim)
+    pub token_embedding_table: Arc<[f32]>, // (vocab_size, dim)
     // weights for rmsnorms
     pub rms_att_weight: Box<[f32]>, // (layer, dim) rmsnorm weights
     pub rms_ffn_weight: Box<[f32]>, // (layer, dim)
@@ -34,7 +35,7 @@ pub struct TransformerWeights {
     // final rmsnorm
     pub rms_final_weight: Box<[f32]>, // (dim,)
     // (optional) classifier weights for the logits, on the last layer
-    pub wcls: Box<[f32]>,
+    pub wcls: Arc<[f32]>,
 }
 
 #[derive(Debug)]
@@ -103,10 +104,10 @@ impl TransformerWeights {
 
         let head_size = config.dim / config.n_heads;
 
-        let token_embedding_table = read_variable_length_data::<f32>(
+        let token_embedding_table: Arc<[f32]> = Arc::from(read_variable_length_data::<f32>(
             model_file,
             (config.vocab_size * config.dim) as usize,
-        )?;
+        )?);
 
         let rms_att_weight =
             read_variable_length_data::<f32>(model_file, (config.n_layers * config.dim) as usize)?;
@@ -154,10 +155,10 @@ impl TransformerWeights {
             token_embedding_table.clone()
         } else {
             let stream_position = model_file.stream_position()?;
-            read_variable_length_data::<f32>(
+            Arc::from(read_variable_length_data::<f32>(
                 model_file,
                 (model_file_size - stream_position) as usize,
-            )?
+            )?)
         };
 
         // println!("{:?}", wcls);
