@@ -1,9 +1,7 @@
-use crate::transformer::Config;
 use crate::utils;
-use core::f32;
-use std::error::Error;
+use core::{f32, str};
 use std::fs::File;
-use std::io::{self, Read};
+use std::io;
 use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Debug)]
@@ -62,13 +60,7 @@ impl Tokenizer {
         }
     }
 
-    pub fn encode(
-        self: &Self,
-        prompt: &String,
-        bos: bool,
-        eos: bool,
-        config: &Config,
-    ) -> Result<Vec<u32>, String> {
+    pub fn encode(self: &Self, prompt: &str, bos: bool, eos: bool) -> Result<Vec<u32>, String> {
         let mut prompt_tokens = vec![];
 
         if bos {
@@ -135,5 +127,31 @@ impl Tokenizer {
         }
 
         Ok(prompt_tokens)
+    }
+
+    pub fn decode(self: &Self, token: u32, prev_token: u32) -> Result<String, String> {
+        let mut piece = self.vocab.get(token as usize).unwrap().clone();
+
+        if prev_token == 1 && piece.chars().nth(0).unwrap() == ' ' {
+            piece = piece.strip_prefix(' ').unwrap().to_string();
+        }
+
+        // match utils::parse_hex_byte(piece.as_str()) {
+        //     Ok(b) => {
+        //         piece = match str::from_utf8(&[b]) {
+        //             Ok(b_str) => {
+        //                 println!("{:?} {:?}", b_str, b);
+        //                 b_str.to_string()
+        //             }
+        //             Err(_) => {
+        //                 println!("xx {:?}", b);
+        //                 piece
+        //             }
+        //         };
+        //     }
+        //     Err(_) => {}
+        // }
+
+        Ok(piece)
     }
 }

@@ -28,3 +28,11 @@ pub fn read_variable_length_data<T: Pod>(
     let ret = cast_slice::<u8, T>(&buffer).to_vec().into_boxed_slice();
     Ok(ret)
 }
+
+pub fn parse_hex_byte(input: &str) -> Result<u8, std::num::ParseIntError> {
+    let hex_str = input
+        .trim_start_matches('<')
+        .trim_end_matches('>')
+        .trim_start_matches("0x");
+    u8::from_str_radix(hex_str, 16)
+}
