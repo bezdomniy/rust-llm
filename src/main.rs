@@ -21,7 +21,12 @@ fn main() -> io::Result<()> {
     //     &transformer.config,
     // );
 
-    tokenizer.encode(&"\x00\x01\x02ыцö加y̆a\r\nb".to_string(), &transformer.config);
+    tokenizer.encode(
+        &"\x00\x01\x02ыцö加y̆a\r\nb".to_string(),
+        true,
+        false,
+        &transformer.config,
+    );
 
     let sampler = Sampler {
         rng_state: 0,

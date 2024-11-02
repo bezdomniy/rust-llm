@@ -61,36 +61,44 @@ impl Tokenizer {
         }
     }
 
-    pub fn encode(self: &Self, prompt: &String, config: &Config) -> Result<Vec<usize>, String> {
+    pub fn encode(
+        self: &Self,
+        prompt: &String,
+        bos: bool,
+        eos: bool,
+        config: &Config,
+    ) -> Result<Vec<u32>, String> {
         // let mut prompt_tokens = vec![0u32; prompt.len() + 3];
         // let mut prompt_tokens = Vec::
         // let str_buffer = vec![0u8; self.max_token_length * 2 + 3];
 
-        let prompt_tokens: Vec<u32> = prompt
-            .graphemes(true)
-            .into_iter()
-            .flat_map(|x| {
-                let i = self.token_lookup(&x.to_string());
-                if i.is_some() {
-                    // println!("{:?}  {:?}", i, self.vocab.get(i.unwrap() as usize));
-                    vec![i.unwrap()]
-                } else {
-                    x.as_bytes()
-                        .iter()
-                        .map(|&b| {
-                            // println!("None {:?}", self.vocab.get((b + 3) as usize));
-                            (b + 3) as u32
-                        })
-                        .collect::<Vec<u32>>()
-                }
-            })
-            .collect();
-        println!("{:?}", prompt_tokens);
+        let mut prompt_tokens = vec![];
 
-        // println!("{:?}", self.token_lookup(&"\n</s>\n".to_string()));
-        // println!("{:?}", self.token_lookup(&"<0x00>".to_string()));
-        // println!("{:?}", self.token_lookup(&"<0x05>".to_string()));
-        // println!("{:?}", self.token_lookup(&"d".to_string()));
-        Ok(vec![])
+        if bos {
+            prompt_tokens.push(1);
+        }
+
+        prompt_tokens.extend(prompt.graphemes(true).into_iter().flat_map(|x| {
+            let i = self.token_lookup(&x.to_string());
+            if i.is_some() {
+                // println!("{:?}  {:?}", i, self.vocab.get(i.unwrap() as usize));
+                vec![i.unwrap()]
+            } else {
+                x.as_bytes()
+                    .iter()
+                    .map(|&b| {
+                        // println!("None {:?}", self.vocab.get((b + 3) as usize));
+                        (b + 3) as u32
+                    })
+                    .collect::<Vec<u32>>()
+            }
+        }));
+
+        if eos {
+            prompt_tokens.push(2);
+        }
+        println!("{:?} {:?}", prompt_tokens, prompt_tokens.capacity());
+
+        Ok(prompt_tokens)
     }
 }
