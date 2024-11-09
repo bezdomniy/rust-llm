@@ -267,13 +267,13 @@ impl Transformer {
                         score /= (head_size as f32).sqrt();
                         att[t as usize] = score;
                     }
-                    Transformer::softmax(&mut att[pos as usize + 1..]);
+                    Transformer::softmax(&mut att[..pos as usize + 1]);
 
                     let xb = &mut self.state.xb[(h * head_size) as usize..];
                     xb.fill(0f32);
 
                     for t in 0..=pos {
-                        let v = &self.state.key_cache
+                        let v = &self.state.value_cache
                             [(loff + (t * kv_dim) + (h / kv_mul) * head_size) as usize..];
                         let a = att[t as usize];
 
