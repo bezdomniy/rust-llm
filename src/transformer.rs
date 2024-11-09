@@ -197,7 +197,6 @@ impl Transformer {
     pub fn forward(self: &mut Self, token: u32, pos: i32) {
         let kv_dim = (self.config.dim * self.config.n_kv_heads) / self.config.n_heads;
         let kv_mul = self.config.n_heads / self.config.n_kv_heads;
-        let hidden_state = self.config.hidden_dim;
         let head_size = self.config.dim / self.config.n_heads;
 
         let content_row = &self.transformer_weights.token_embedding_table[(token as i32
@@ -206,7 +205,7 @@ impl Transformer {
             ..((token as i32 * self.config.dim) + self.config.dim) as usize];
         self.state.x.copy_from_slice(content_row);
 
-        (0..self.config.n_layers).into_iter().for_each(|l| {
+        for l in 0..self.config.n_layers {
             Transformer::rms_norm(
                 &mut self.state.xb,
                 &self.state.x,
@@ -217,16 +216,16 @@ impl Transformer {
             let kv_start = (loff + (pos * kv_dim)) as usize;
 
             Transformer::mat_mul(
-                &mut self.state.key_cache[kv_start..],
-                &self.state.xb[..self.config.dim as usize],
-                &self.transformer_weights.wk[(l * self.config.dim * self.config.dim) as usize..],
+                &mut self.state.q,
+                &self.state.xb,
+                &self.transformer_weights.wq[(l * self.config.dim * self.config.dim) as usize..],
                 self.config.dim as usize,
                 self.config.dim as usize,
             );
 
             Transformer::mat_mul(
                 &mut self.state.key_cache[kv_start..],
-                &self.state.xb[..self.config.dim as usize],
+                &self.state.xb,
                 &self.transformer_weights.wk[(l * self.config.dim * kv_dim) as usize..],
                 self.config.dim as usize,
                 kv_dim as usize,
@@ -234,8 +233,8 @@ impl Transformer {
 
             Transformer::mat_mul(
                 &mut self.state.value_cache[kv_start..],
-                &self.state.xb[..self.config.dim as usize],
-                &self.transformer_weights.wv,
+                &self.state.xb,
+                &self.transformer_weights.wv[(l * self.config.dim * kv_dim) as usize..],
                 self.config.dim as usize,
                 kv_dim as usize,
             );
@@ -254,13 +253,13 @@ impl Transformer {
                         &mut self.state.key_cache[kv_start..]
                     };
                     vec[i] = vec[i] * fcr - vec[i + 1] * fci;
-                    vec[i + 1] = vec[i] * fci - vec[i + 1] * fcr;
+                    vec[i + 1] = vec[i] * fci + vec[i + 1] * fcr;
                 }
 
                 for h in 0..self.config.n_heads {
                     let q = &self.state.q[(h * head_size) as usize..];
                     let att = &mut self.state.att[(h * self.config.seq_len) as usize..];
-                    for t in 0..pos {
+                    for t in 0..=pos {
                         let k = &self.state.key_cache
                             [(loff + (t * kv_dim) + (h / kv_mul) * head_size) as usize..];
                         let mut score =
@@ -300,7 +299,7 @@ impl Transformer {
             Transformer::rms_norm(
                 &mut self.state.xb,
                 &self.state.x,
-                &self.transformer_weights.rms_ffn_weight,
+                &self.transformer_weights.rms_ffn_weight[(l * self.config.dim) as usize..],
             );
 
             Transformer::mat_mul(
@@ -340,7 +339,7 @@ impl Transformer {
             for i in 0..self.config.dim as usize {
                 self.state.x[i] += self.state.xb[i];
             }
-        });
+        }
 
         // TODO: find a nicer way
         Transformer::_rms_norm_self(
