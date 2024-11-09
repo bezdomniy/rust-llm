@@ -9,13 +9,20 @@ use tokenizer::Tokenizer;
 use transformer::Transformer;
 
 fn generate(
-    transformer: &Transformer,
+    transformer: &mut Transformer,
     tokenizer: &Tokenizer,
     sampler: &Sampler,
     prompt: &str,
-    steps: u32,
+    steps: i32,
 ) -> Result<bool, String> {
     let tokens = tokenizer.encode(prompt, true, false)?;
+
+    let mut pos = 0;
+    let token = tokens[0];
+    while pos < steps {
+        transformer.forward(token, pos);
+        break;
+    }
 
     let decoded_tokens = tokens
         .windows(2)
@@ -33,7 +40,7 @@ fn generate(
 }
 
 fn main() -> io::Result<()> {
-    let transformer = transformer::Transformer::new("assets/stories15M.bin")?;
+    let mut transformer = transformer::Transformer::new("assets/stories15M.bin")?;
 
     let vocab_size = transformer.config.vocab_size;
     let tokenizer = tokenizer::Tokenizer::new("assets/tokenizer.bin", vocab_size as u32)?;
@@ -46,7 +53,14 @@ fn main() -> io::Result<()> {
         prob_index: vec![ProbIndex::default(); vocab_size as usize].into_boxed_slice(),
     };
 
-    generate(&transformer, &tokenizer, &sampler, "\x03 abcdef 🐻\x1f", 16);
+    generate(
+        &mut transformer,
+        &tokenizer,
+        &sampler,
+        "hello",
+        // "\x03 abcdef 🐻\x1f",
+        16,
+    );
 
     // println!("Enter you prompt:");
     // let stdin = io::stdin();

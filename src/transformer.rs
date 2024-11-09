@@ -52,8 +52,6 @@ pub struct RunState {
     // kv cache
     pub key_cache: Box<[f32]>,   // (layer, seq_len, dim)
     pub value_cache: Box<[f32]>, // (layer, seq_len, dim)
-    pub k: usize,                // key (dim,)
-    pub v: usize,                // value (dim,)
 }
 
 #[derive(Debug)]
@@ -90,8 +88,6 @@ impl RunState {
             x,
             xb,
             xb2,
-            k: 0,
-            v: 0,
         })
     }
 }
@@ -196,5 +192,92 @@ impl Transformer {
             transformer_weights,
             state,
         })
+    }
+
+    pub fn forward(self: &mut Self, token: u32, pos: i32) {
+        let kv_dim = (self.config.dim * self.config.n_kv_heads) / self.config.n_heads;
+        let kv_mul = self.config.n_heads / self.config.n_kv_heads;
+        let hidden_state = self.config.hidden_dim;
+        let head_size = self.config.dim / self.config.n_heads;
+
+        let x = &self.transformer_weights.token_embedding_table[(token as i32 * self.config.dim)
+            as usize
+            ..((token as i32 * self.config.dim) + self.config.dim) as usize];
+        self.state.x.copy_from_slice(x);
+
+        (0..self.config.n_layers).into_iter().for_each(|l| {
+            Transformer::rms_norm(
+                &mut self.state.xb,
+                &self.state.x,
+                &self.transformer_weights.rms_att_weight[(l * self.config.dim) as usize..],
+            );
+
+            let loff = l * self.config.seq_len * kv_dim;
+            let kv_start = (loff + (pos * kv_dim)) as usize;
+
+            Transformer::mat_mul(
+                &mut self.state.key_cache[kv_start..],
+                &self.state.xb[..self.config.dim as usize],
+                &self.transformer_weights.wk[(l * self.config.dim * self.config.dim) as usize..],
+                self.config.dim as usize,
+                self.config.dim as usize,
+            );
+
+            Transformer::mat_mul(
+                &mut self.state.key_cache[kv_start..],
+                &self.state.xb[..self.config.dim as usize],
+                &self.transformer_weights.wk[(l * self.config.dim * kv_dim) as usize..],
+                self.config.dim as usize,
+                kv_dim as usize,
+            );
+
+            Transformer::mat_mul(
+                &mut self.state.value_cache[kv_start..],
+                &self.state.xb[..self.config.dim as usize],
+                &self.transformer_weights.wv,
+                self.config.dim as usize,
+                kv_dim as usize,
+            );
+
+            for i in (0..self.config.dim as usize).step_by(2) {
+                let head_dim = i as i32 % head_size;
+                let freq = 1f32 / 10000f32.powf((head_dim / head_size) as f32);
+                let val = pos as f32 * freq;
+                let fcr = val.cos();
+                let fci = val.sin();
+                let rotn = if i < kv_dim as usize { 2 } else { 1 };
+                for v in 0..rotn {
+                    let vec = if v == 0 {
+                        self.state.q.as_mut()
+                    } else {
+                        &mut self.state.key_cache[kv_start..]
+                    };
+                    vec[i] = vec[i] * fcr - vec[i + 1] * fci;
+                    vec[i + 1] = vec[i] * fci - vec[i + 1] * fcr;
+                }
+            }
+        });
+    }
+
+    fn mat_mul(o: &mut [f32], x: &[f32], w: &[f32], n: usize, d: usize) {
+        // #pragma omp parallel for private(i)
+        for i in 0..d {
+            let mut val = 0f32;
+            for j in 0..n {
+                val += w[i * n + j] * x[j];
+            }
+            o[i] = val;
+        }
+    }
+
+    fn rms_norm(o: &mut [f32], x: &[f32], weight: &[f32]) {
+        let mut ss = x.into_iter().fold(0.0, |acc, val| acc + (val * val));
+        ss /= x.len() as f32;
+        ss += 1e-5f32;
+        ss = 1f32 / ss.sqrt();
+
+        for i in 0..o.len() {
+            o[i] = weight[i] * (ss * x[i]);
+        }
     }
 }
