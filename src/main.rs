@@ -15,16 +15,36 @@ fn generate(
     prompt: &str,
     steps: i32,
 ) -> Result<bool, String> {
-    let tokens = tokenizer.encode(prompt, true, false)?;
+    let prompt_tokens = tokenizer.encode(prompt, true, false)?;
 
     let mut pos = 0;
-    let token = tokens[0];
+    let mut next = 0usize;
+    let mut token = prompt_tokens[0];
+
+    let mut out_tokens = vec![];
     while pos < steps {
         transformer.forward(token, pos);
-        break;
+
+        if pos < prompt_tokens.len() as i32 - 1 {
+            next = prompt_tokens[(pos + 1) as usize] as usize;
+        } else {
+            next = sampler.sample(&transformer.state.logits[0..]);
+        }
+        pos += 1;
+
+        if next == 1 {
+            break;
+        }
+
+        out_tokens.push(next as u32);
+
+        token = next as u32;
+
+        // let token = tokenizer.decode(token, 0).unwrap();
+        // println!("{:?}", token);
     }
 
-    let decoded_tokens = tokens
+    let decoded_tokens = out_tokens
         .windows(2)
         .map(|pair| {
             if let &[prev_token, token] = pair {
@@ -53,13 +73,14 @@ fn main() -> io::Result<()> {
         prob_index: vec![ProbIndex::default(); vocab_size as usize].into_boxed_slice(),
     };
 
-    generate(
+    let _res = generate(
         &mut transformer,
         &tokenizer,
         &sampler,
-        "hello",
+        "Today I went",
+        // "One day, Lily met a Shoggoth",
         // "\x03 abcdef 🐻\x1f",
-        16,
+        32,
     );
 
     // println!("Enter you prompt:");

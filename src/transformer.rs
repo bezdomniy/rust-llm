@@ -200,10 +200,11 @@ impl Transformer {
         let hidden_state = self.config.hidden_dim;
         let head_size = self.config.dim / self.config.n_heads;
 
-        let x = &self.transformer_weights.token_embedding_table[(token as i32 * self.config.dim)
+        let content_row = &self.transformer_weights.token_embedding_table[(token as i32
+            * self.config.dim)
             as usize
             ..((token as i32 * self.config.dim) + self.config.dim) as usize];
-        self.state.x.copy_from_slice(x);
+        self.state.x.copy_from_slice(content_row);
 
         (0..self.config.n_layers).into_iter().for_each(|l| {
             Transformer::rms_norm(
@@ -255,8 +256,105 @@ impl Transformer {
                     vec[i] = vec[i] * fcr - vec[i + 1] * fci;
                     vec[i + 1] = vec[i] * fci - vec[i + 1] * fcr;
                 }
+
+                for h in 0..self.config.n_heads {
+                    let q = &self.state.q[(h * head_size) as usize..];
+                    let att = &mut self.state.att[(h * self.config.seq_len) as usize..];
+                    for t in 0..pos {
+                        let k = &self.state.key_cache
+                            [(loff + (t * kv_dim) + (h / kv_mul) * head_size) as usize..];
+                        let mut score =
+                            (0..head_size as usize).fold(0f32, |acc, i| acc + q[i] * k[i]);
+                        score /= (head_size as f32).sqrt();
+                        att[t as usize] = score;
+                    }
+                    Transformer::softmax(&mut att[pos as usize + 1..]);
+
+                    let xb = &mut self.state.xb[(h * head_size) as usize..];
+                    xb.fill(0f32);
+
+                    for t in 0..=pos {
+                        let v = &self.state.key_cache
+                            [(loff + (t * kv_dim) + (h / kv_mul) * head_size) as usize..];
+                        let a = att[t as usize];
+
+                        for i in 0..head_size as usize {
+                            xb[i] += a * v[i];
+                        }
+                    }
+                }
+            }
+
+            Transformer::mat_mul(
+                &mut self.state.xb2,
+                &self.state.xb,
+                &self.transformer_weights.wo[(l * self.config.dim * self.config.dim) as usize..],
+                self.config.dim as usize,
+                self.config.dim as usize,
+            );
+
+            for i in 0..self.config.dim as usize {
+                self.state.x[i] += self.state.xb2[i];
+            }
+
+            Transformer::rms_norm(
+                &mut self.state.xb,
+                &self.state.x,
+                &self.transformer_weights.rms_ffn_weight,
+            );
+
+            Transformer::mat_mul(
+                &mut self.state.hb,
+                &self.state.xb,
+                &self.transformer_weights.w1
+                    [(l * self.config.dim * self.config.hidden_dim) as usize..],
+                self.config.dim as usize,
+                self.config.hidden_dim as usize,
+            );
+
+            Transformer::mat_mul(
+                &mut self.state.hb2,
+                &self.state.xb,
+                &self.transformer_weights.w3
+                    [(l * self.config.dim * self.config.hidden_dim) as usize..],
+                self.config.dim as usize,
+                self.config.hidden_dim as usize,
+            );
+
+            for i in 0..self.config.hidden_dim as usize {
+                let mut val = self.state.hb[i];
+                val *= 1f32 / (1f32 + (-val).exp());
+                val *= self.state.hb2[i];
+                self.state.hb[i] = val;
+            }
+
+            Transformer::mat_mul(
+                &mut self.state.xb,
+                &self.state.hb,
+                &self.transformer_weights.w2
+                    [(l * self.config.dim * self.config.hidden_dim) as usize..],
+                self.config.hidden_dim as usize,
+                self.config.dim as usize,
+            );
+
+            for i in 0..self.config.dim as usize {
+                self.state.x[i] += self.state.xb[i];
             }
         });
+
+        // TODO: find a nicer way
+        Transformer::_rms_norm_self(
+            &mut self.state.x,
+            &self.transformer_weights.rms_final_weight,
+        );
+
+        Transformer::mat_mul(
+            &mut self.state.logits,
+            &self.state.x,
+            &self.transformer_weights.wcls,
+            self.config.dim as usize,
+            self.config.vocab_size as usize,
+        );
     }
 
     fn mat_mul(o: &mut [f32], x: &[f32], w: &[f32], n: usize, d: usize) {
@@ -279,5 +377,35 @@ impl Transformer {
         for i in 0..o.len() {
             o[i] = weight[i] * (ss * x[i]);
         }
+    }
+
+    fn _rms_norm_self(o: &mut [f32], weight: &[f32]) {
+        let mut ss = o.into_iter().fold(0.0, |acc, &mut val| acc + (val * val));
+        ss /= o.len() as f32;
+        ss += 1e-5f32;
+        ss = 1f32 / ss.sqrt();
+
+        for i in 0..o.len() {
+            o[i] = weight[i] * (ss * o[i]);
+        }
+    }
+
+    fn softmax(x: &mut [f32]) {
+        let mut max_val = x[0];
+        x.iter().for_each(|&e| {
+            if e > max_val {
+                max_val = e;
+            }
+        });
+
+        let mut sum = 0f32;
+        x.iter_mut().for_each(|e| {
+            *e = (*e - max_val).exp();
+            sum += *e;
+        });
+
+        x.iter_mut().for_each(|e| {
+            *e /= sum;
+        });
     }
 }
