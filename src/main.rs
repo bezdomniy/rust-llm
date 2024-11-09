@@ -2,7 +2,7 @@ mod sampler;
 mod tokenizer;
 mod transformer;
 mod utils;
-use std::io;
+use std::io::{self, Write};
 
 use sampler::{ProbIndex, Sampler};
 use tokenizer::Tokenizer;
@@ -20,6 +20,7 @@ fn generate(
     let mut pos = 0;
     let mut next = 0usize;
     let mut token = prompt_tokens[0];
+    let mut prev_token = token;
 
     let mut out_tokens = vec![];
     while pos < steps {
@@ -28,9 +29,8 @@ fn generate(
         if pos < prompt_tokens.len() as i32 - 1 {
             next = prompt_tokens[(pos + 1) as usize] as usize;
         } else {
-            next = sampler.sample(&transformer.state.logits[0..]);
+            next = sampler.sample(&transformer.state.logits[..]);
         }
-        pos += 1;
 
         if next == 1 {
             break;
@@ -38,23 +38,29 @@ fn generate(
 
         out_tokens.push(next as u32);
 
+        if pos > 0 {
+            let word = tokenizer.decode(token, prev_token).unwrap();
+            print!("{}", word);
+            let _ = io::stdout().flush();
+        }
+
+        prev_token = token;
         token = next as u32;
-
-        // let token = tokenizer.decode(token, 0).unwrap();
-        // println!("{:?}", token);
+        pos += 1;
     }
+    println!("");
 
-    let decoded_tokens = out_tokens
-        .windows(2)
-        .map(|pair| {
-            if let &[prev_token, token] = pair {
-                tokenizer.decode(token, prev_token).unwrap()
-            } else {
-                '\0'.to_string()
-            }
-        })
-        .collect::<Vec<String>>();
-    println!("{:?}", decoded_tokens);
+    // let decoded_tokens = out_tokens
+    //     .windows(2)
+    //     .map(|pair| {
+    //         if let &[prev_token, token] = pair {
+    //             tokenizer.decode(token, prev_token).unwrap()
+    //         } else {
+    //             '\0'.to_string()
+    //         }
+    //     })
+    //     .collect::<Vec<String>>();
+    // println!("{:?}", decoded_tokens);
 
     Ok(true)
 }
@@ -77,10 +83,11 @@ fn main() -> io::Result<()> {
         &mut transformer,
         &tokenizer,
         &sampler,
-        "Today I went",
-        // "One day, Lily met a Shoggoth",
+        // "Today I went",
+        // "butter, ",
+        "One day, Lily met a Shoggoth",
         // "\x03 abcdef 🐻\x1f",
-        32,
+        64,
     );
 
     // println!("Enter you prompt:");
