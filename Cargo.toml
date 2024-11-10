@@ -5,4 +5,5 @@ edition = "2021"
 
 [dependencies]
 bytemuck = { version = "1.19", features = ["derive"] }
+rand = "0.8.5"
 unicode-segmentation = "1.12.0"

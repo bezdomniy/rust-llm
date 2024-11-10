@@ -29,7 +29,7 @@ fn generate(
         if pos < prompt_tokens.len() as i32 - 1 {
             next = prompt_tokens[(pos + 1) as usize] as usize;
         } else {
-            next = sampler.sample(&transformer.state.logits[..]);
+            next = sampler.sample(&mut transformer.state.logits[..]);
         }
 
         if next == 1 {
@@ -71,10 +71,15 @@ fn main() -> io::Result<()> {
     let vocab_size = transformer.config.vocab_size;
     let tokenizer = tokenizer::Tokenizer::new("assets/tokenizer.bin", vocab_size as u32)?;
 
+    let temperature = 0f32;
+    let topp = 0.9f32;
+    let steps = 256;
+    let rng_state = 0;
+
     let sampler = Sampler {
-        rng_state: 0,
-        temperature: 0.0,
-        topp: 0.9,
+        rng_state,
+        temperature,
+        topp,
         vocab_size,
         prob_index: vec![ProbIndex::default(); vocab_size as usize].into_boxed_slice(),
     };
@@ -84,10 +89,10 @@ fn main() -> io::Result<()> {
         &tokenizer,
         &sampler,
         // "Today I went",
-        // "butter, ",
+        // "Why?",
         "One day, Lily met a Shoggoth",
         // "\x03 abcdef 🐻\x1f",
-        64,
+        steps,
     );
 
     // println!("Enter you prompt:");

@@ -241,7 +241,7 @@ impl Transformer {
 
             for i in (0..self.config.dim as usize).step_by(2) {
                 let head_dim = i as i32 % head_size;
-                let freq = 1f32 / 10000f32.powf((head_dim / head_size) as f32);
+                let freq = 1f32 / 10000f32.powf((head_dim as f32 / head_size as f32) as f32);
                 let val = pos as f32 * freq;
                 let fcr = val.cos();
                 let fci = val.sin();
@@ -252,24 +252,32 @@ impl Transformer {
                     } else {
                         &mut self.state.key_cache[kv_start..]
                     };
-                    vec[i] = vec[i] * fcr - vec[i + 1] * fci;
-                    vec[i + 1] = vec[i] * fci + vec[i + 1] * fcr;
+                    let v0 = vec[i];
+                    let v1 = vec[i + 1];
+                    vec[i] = v0 * fcr - v1 * fci;
+                    vec[i + 1] = v0 * fci + v1 * fcr;
                 }
 
                 for h in 0..self.config.n_heads {
                     let q = &self.state.q[(h * head_size) as usize..];
-                    let att = &mut self.state.att[(h * self.config.seq_len) as usize..];
+                    let att = &mut self.state.att[(h * self.config.seq_len) as usize
+                        ..((h * self.config.seq_len) + pos + 1) as usize];
                     for t in 0..=pos {
-                        let k = &self.state.key_cache
+                        let k: &[f32] = &self.state.key_cache
                             [(loff + (t * kv_dim) + (h / kv_mul) * head_size) as usize..];
-                        let mut score =
-                            (0..head_size as usize).fold(0f32, |acc, i| acc + q[i] * k[i]);
+                        let mut score = (0..head_size as usize).fold(0f32, |acc, i| {
+                            let u = q[i];
+                            let v = k[i];
+                            let mul = u * v;
+                            acc + mul
+                        });
                         score /= (head_size as f32).sqrt();
                         att[t as usize] = score;
                     }
-                    Transformer::softmax(&mut att[..pos as usize + 1]);
+                    Transformer::softmax(&mut att[..]);
 
-                    let xb = &mut self.state.xb[(h * head_size) as usize..];
+                    let xb = &mut self.state.xb
+                        [(h * head_size) as usize..((h * head_size) + head_size) as usize];
                     xb.fill(0f32);
 
                     for t in 0..=pos {
@@ -361,23 +369,71 @@ impl Transformer {
         for i in 0..d {
             let mut val = 0f32;
             for j in 0..n {
-                val += w[i * n + j] * x[j];
+                let u = w[i * n + j];
+                let v = x[j];
+                // let qq = -0.00863159261f32 * 0.463056326f32;
+                let toadd = u * v;
+                let new_val = val + toadd;
+
+                val = new_val;
             }
             o[i] = val;
         }
     }
 
+    // fn mat_mul(o: &mut [f32], x: &[f32], w: &[f32], n: usize, d: usize) {
+    //     // assert_eq!(o.len(), d, "Output slice length must be equal to d.");
+    //     // assert_eq!(x.len(), n, "Input vector length must be equal to n.");
+    //     // assert_eq!(
+    //     //     w.len(),
+    //     //     n * d,
+    //     //     "Weight matrix length must be equal to n * d."
+    //     // );
+
+    //     for i in 0..d {
+    //         let mut val = 0f32;
+    //         for j in 0..n {
+    //             // Using unchecked indexing with get_unchecked
+    //             unsafe {
+    //                 val += *w.get_unchecked(i * n + j) * *x.get_unchecked(j);
+    //             }
+    //         }
+    //         unsafe {
+    //             *o.get_unchecked_mut(i) = val;
+    //         }
+    //     }
+    // }
+
     fn rms_norm(o: &mut [f32], x: &[f32], weight: &[f32]) {
-        let mut ss = x.into_iter().fold(0.0, |acc, val| acc + (val * val));
+        // let mut ss = x.into_iter().fold(0.0, |acc, val| acc + (val * val));
+        // let mut ss = x.iter().map(|&val| val * val).sum::<f32>();
+
+        let mut ss = 0f32;
+        for val in x.iter() {
+            let val_sq = val * val;
+            ss += val_sq;
+        }
         ss /= x.len() as f32;
         ss += 1e-5f32;
         ss = 1f32 / ss.sqrt();
 
-        for i in 0..o.len() {
+        for i in 0..x.len() {
             o[i] = weight[i] * (ss * x[i]);
         }
     }
+    // fn rms_norm(o: &mut [f32], x: &[f32], weight: &[f32]) {
+    //     // assert!(
+    //     //     o.len() == x.len() && x.len() == weight.len(),
+    //     //     "Input slices must be of the same length"
+    //     // );
 
+    //     let ss = x.iter().map(|&val| val * val).sum::<f32>() / x.len() as f32 + 1e-5;
+    //     let norm_factor = 1.0 / ss.sqrt();
+
+    //     for i in 0..x.len() {
+    //         o[i] = weight[i] * norm_factor * x[i];
+    //     }
+    // }
     fn _rms_norm_self(o: &mut [f32], weight: &[f32]) {
         let mut ss = o.into_iter().fold(0.0, |acc, &mut val| acc + (val * val));
         ss /= o.len() as f32;
@@ -389,22 +445,79 @@ impl Transformer {
         }
     }
 
-    fn softmax(x: &mut [f32]) {
-        let mut max_val = x[0];
-        x.iter().for_each(|&e| {
-            if e > max_val {
-                max_val = e;
-            }
-        });
+    // pub fn softmax(x: &mut [f32]) {
+    //     let mut max_val = x[0];
+    //     x.iter().for_each(|&e| {
+    //         if e > max_val {
+    //             max_val = e;
+    //         }
+    //     });
 
-        let mut sum = 0f32;
-        x.iter_mut().for_each(|e| {
-            *e = (*e - max_val).exp();
-            sum += *e;
-        });
+    //     let mut sum = 0f32;
+    //     x.iter_mut().for_each(|e| {
+    //         *e = (*e - max_val).exp();
+    //         sum += *e;
+    //     });
 
-        x.iter_mut().for_each(|e| {
-            *e /= sum;
-        });
+    //     x.iter_mut().for_each(|e| {
+    //         *e /= sum;
+    //     });
+    // }
+    pub fn softmax(x: &mut [f32]) {
+        // Step 1: Find the maximum value for numerical stability.
+        let max_val = x.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+
+        // Step 2: Compute the exponentials of each element (after subtracting max_val).
+        let exp_values: Vec<f32> = x.iter().map(|&e| (e - max_val).exp()).collect();
+
+        // Step 3: Compute the sum of exponentials.
+        let sum: f32 = exp_values.iter().sum();
+
+        // Step 4: Normalize each element in place.
+        x.iter_mut()
+            .zip(exp_values.iter())
+            .for_each(|(e, &exp_val)| {
+                *e = exp_val / sum;
+            });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // Note this useful idiom: importing names from outer (for mod tests) scope.
+    use super::*;
+
+    #[test]
+    fn test_square_mul() {
+        let x = vec![1f32, 2f32, 3f32, 4f32];
+        let w = vec![
+            0f32, 1f32, 2f32, 3f32, 3f32, 3f32, 3f32, 3f32, 4f32, 4f32, 4f32, 4f32, 5f32, 5f32,
+            5f32, 5f32,
+        ];
+
+        let mut o = vec![0f32, 0f32, 0f32, 0f32];
+
+        let excepted_o = vec![20f32, 30f32, 40f32, 50f32];
+
+        Transformer::mat_mul(o.as_mut_slice(), x.as_slice(), w.as_slice(), 4, 4);
+
+        assert_eq!(o, excepted_o.as_slice());
+    }
+
+    #[test]
+    fn test_nonsquare_mul() {
+        let x = vec![1f32, 2f32, 3f32, 4f32];
+        let w = vec![
+            0f32, 1f32, 2f32, 3f32, 3f32, 3f32, 3f32, 3f32, 4f32, 4f32, 4f32, 4f32, 5f32, 5f32,
+            5f32, 5f32, 6f32, 6f32, 6f32, 6f32,
+        ];
+
+        let mut o = vec![0f32, 0f32, 0f32, 0f32, 0f32];
+
+        let excepted_o = vec![20f32, 30f32, 40f32, 50f32, 60f32];
+
+        Transformer::mat_mul(o.as_mut_slice(), x.as_slice(), w.as_slice(), 4, 5);
+
+        assert_eq!(o, excepted_o.as_slice());
     }
 }
