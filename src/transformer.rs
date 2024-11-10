@@ -1,5 +1,6 @@
 use crate::utils::{read_file_to_struct, read_variable_length_data};
 use bytemuck::{Pod, Zeroable};
+use rayon::prelude::*;
 use std::fs::File;
 use std::io::{self, Seek};
 use std::sync::Arc;
@@ -220,23 +221,20 @@ impl Transformer {
                 &self.state.xb,
                 &self.transformer_weights.wq[(l * self.config.dim * self.config.dim) as usize..],
                 self.config.dim as usize,
-                self.config.dim as usize,
             );
 
             Transformer::mat_mul(
-                &mut self.state.key_cache[kv_start..],
+                &mut self.state.key_cache[kv_start..kv_start + kv_dim as usize],
                 &self.state.xb,
                 &self.transformer_weights.wk[(l * self.config.dim * kv_dim) as usize..],
                 self.config.dim as usize,
-                kv_dim as usize,
             );
 
             Transformer::mat_mul(
-                &mut self.state.value_cache[kv_start..],
+                &mut self.state.value_cache[kv_start..kv_start + kv_dim as usize],
                 &self.state.xb,
                 &self.transformer_weights.wv[(l * self.config.dim * kv_dim) as usize..],
                 self.config.dim as usize,
-                kv_dim as usize,
             );
 
             for i in (0..self.config.dim as usize).step_by(2) {
@@ -258,19 +256,16 @@ impl Transformer {
                     vec[i + 1] = v0 * fci + v1 * fcr;
                 }
 
-                for h in 0..self.config.n_heads {
+                // for h in 0..self.config.n_heads {
+                (0..self.config.n_heads).into_iter().for_each(|h| {
                     let q = &self.state.q[(h * head_size) as usize..];
                     let att = &mut self.state.att[(h * self.config.seq_len) as usize
                         ..((h * self.config.seq_len) + pos + 1) as usize];
                     for t in 0..=pos {
                         let k: &[f32] = &self.state.key_cache
                             [(loff + (t * kv_dim) + (h / kv_mul) * head_size) as usize..];
-                        let mut score = (0..head_size as usize).fold(0f32, |acc, i| {
-                            let u = q[i];
-                            let v = k[i];
-                            let mul = u * v;
-                            acc + mul
-                        });
+                        let mut score =
+                            (0..head_size as usize).fold(0f32, |acc, i| acc + q[i] * k[i]);
                         score /= (head_size as f32).sqrt();
                         att[t as usize] = score;
                     }
@@ -289,14 +284,13 @@ impl Transformer {
                             xb[i] += a * v[i];
                         }
                     }
-                }
+                });
             }
 
             Transformer::mat_mul(
                 &mut self.state.xb2,
                 &self.state.xb,
                 &self.transformer_weights.wo[(l * self.config.dim * self.config.dim) as usize..],
-                self.config.dim as usize,
                 self.config.dim as usize,
             );
 
@@ -316,7 +310,6 @@ impl Transformer {
                 &self.transformer_weights.w1
                     [(l * self.config.dim * self.config.hidden_dim) as usize..],
                 self.config.dim as usize,
-                self.config.hidden_dim as usize,
             );
 
             Transformer::mat_mul(
@@ -325,7 +318,6 @@ impl Transformer {
                 &self.transformer_weights.w3
                     [(l * self.config.dim * self.config.hidden_dim) as usize..],
                 self.config.dim as usize,
-                self.config.hidden_dim as usize,
             );
 
             for i in 0..self.config.hidden_dim as usize {
@@ -341,7 +333,6 @@ impl Transformer {
                 &self.transformer_weights.w2
                     [(l * self.config.dim * self.config.hidden_dim) as usize..],
                 self.config.hidden_dim as usize,
-                self.config.dim as usize,
             );
 
             for i in 0..self.config.dim as usize {
@@ -360,59 +351,21 @@ impl Transformer {
             &self.state.x,
             &self.transformer_weights.wcls,
             self.config.dim as usize,
-            self.config.vocab_size as usize,
         );
     }
 
-    fn mat_mul(o: &mut [f32], x: &[f32], w: &[f32], n: usize, d: usize) {
-        // #pragma omp parallel for private(i)
-        for i in 0..d {
+    fn mat_mul(o: &mut [f32], x: &[f32], w: &[f32], n: usize) {
+        o.par_iter_mut().enumerate().for_each(|(i, e)| {
             let mut val = 0f32;
             for j in 0..n {
-                let u = w[i * n + j];
-                let v = x[j];
-                // let qq = -0.00863159261f32 * 0.463056326f32;
-                let toadd = u * v;
-                let new_val = val + toadd;
-
-                val = new_val;
+                val += w[i * n + j] * x[j];
             }
-            o[i] = val;
-        }
+            *e = val;
+        });
     }
 
-    // fn mat_mul(o: &mut [f32], x: &[f32], w: &[f32], n: usize, d: usize) {
-    //     // assert_eq!(o.len(), d, "Output slice length must be equal to d.");
-    //     // assert_eq!(x.len(), n, "Input vector length must be equal to n.");
-    //     // assert_eq!(
-    //     //     w.len(),
-    //     //     n * d,
-    //     //     "Weight matrix length must be equal to n * d."
-    //     // );
-
-    //     for i in 0..d {
-    //         let mut val = 0f32;
-    //         for j in 0..n {
-    //             // Using unchecked indexing with get_unchecked
-    //             unsafe {
-    //                 val += *w.get_unchecked(i * n + j) * *x.get_unchecked(j);
-    //             }
-    //         }
-    //         unsafe {
-    //             *o.get_unchecked_mut(i) = val;
-    //         }
-    //     }
-    // }
-
     fn rms_norm(o: &mut [f32], x: &[f32], weight: &[f32]) {
-        // let mut ss = x.into_iter().fold(0.0, |acc, val| acc + (val * val));
-        // let mut ss = x.iter().map(|&val| val * val).sum::<f32>();
-
-        let mut ss = 0f32;
-        for val in x.iter() {
-            let val_sq = val * val;
-            ss += val_sq;
-        }
+        let mut ss = x.iter().fold(0.0, |acc, &val| acc + (val * val));
         ss /= x.len() as f32;
         ss += 1e-5f32;
         ss = 1f32 / ss.sqrt();
@@ -421,23 +374,12 @@ impl Transformer {
             o[i] = weight[i] * (ss * x[i]);
         }
     }
-    // fn rms_norm(o: &mut [f32], x: &[f32], weight: &[f32]) {
-    //     // assert!(
-    //     //     o.len() == x.len() && x.len() == weight.len(),
-    //     //     "Input slices must be of the same length"
-    //     // );
 
-    //     let ss = x.iter().map(|&val| val * val).sum::<f32>() / x.len() as f32 + 1e-5;
-    //     let norm_factor = 1.0 / ss.sqrt();
-
-    //     for i in 0..x.len() {
-    //         o[i] = weight[i] * norm_factor * x[i];
-    //     }
-    // }
     fn _rms_norm_self(o: &mut [f32], weight: &[f32]) {
-        let mut ss = o.into_iter().fold(0.0, |acc, &mut val| acc + (val * val));
+        let mut ss = o.iter().fold(0.0, |acc, &val| acc + (val * val));
         ss /= o.len() as f32;
         ss += 1e-5f32;
+
         ss = 1f32 / ss.sqrt();
 
         for i in 0..o.len() {
@@ -499,7 +441,7 @@ mod tests {
 
         let excepted_o = vec![20f32, 30f32, 40f32, 50f32];
 
-        Transformer::mat_mul(o.as_mut_slice(), x.as_slice(), w.as_slice(), 4, 4);
+        Transformer::mat_mul(o.as_mut_slice(), x.as_slice(), w.as_slice(), 4);
 
         assert_eq!(o, excepted_o.as_slice());
     }
@@ -516,7 +458,7 @@ mod tests {
 
         let excepted_o = vec![20f32, 30f32, 40f32, 50f32, 60f32];
 
-        Transformer::mat_mul(o.as_mut_slice(), x.as_slice(), w.as_slice(), 4, 5);
+        Transformer::mat_mul(o.as_mut_slice(), x.as_slice(), w.as_slice(), 4);
 
         assert_eq!(o, excepted_o.as_slice());
     }

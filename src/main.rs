@@ -18,7 +18,7 @@ fn generate(
     let prompt_tokens = tokenizer.encode(prompt, true, false)?;
 
     let mut pos = 0;
-    let mut next = 0usize;
+    let mut next;
     let mut token = prompt_tokens[0];
     let mut prev_token = token;
 
@@ -66,7 +66,7 @@ fn generate(
 }
 
 fn main() -> io::Result<()> {
-    let mut transformer = transformer::Transformer::new("assets/stories15M.bin")?;
+    let mut transformer = transformer::Transformer::new("assets/stories42M.bin")?;
 
     let vocab_size = transformer.config.vocab_size;
     let tokenizer = tokenizer::Tokenizer::new("assets/tokenizer.bin", vocab_size as u32)?;
@@ -90,7 +90,8 @@ fn main() -> io::Result<()> {
         &sampler,
         // "Today I went",
         // "Why?",
-        "One day, Lily met a Shoggoth",
+        "One",
+        // "One day, Lily met a Shoggoth",
         // "\x03 abcdef 🐻\x1f",
         steps,
     );

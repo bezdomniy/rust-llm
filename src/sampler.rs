@@ -18,8 +18,6 @@ pub struct Sampler {
 
 impl Sampler {
     pub fn sample(self: &Self, logits: &mut [f32]) -> usize {
-        let mut rng = rand::thread_rng();
-
         if self.temperature == 0f32 {
             Sampler::sample_argmax(logits)
         } else {
@@ -28,7 +26,7 @@ impl Sampler {
             });
             Transformer::softmax(logits);
 
-            let coin: f32 = rng.gen();
+            let coin: f32 = rand::thread_rng().gen();
 
             if self.topp <= 0f32 || self.topp >= 1f32 {
                 Sampler::sample_mult(logits, coin)
