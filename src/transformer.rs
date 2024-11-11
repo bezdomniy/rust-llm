@@ -1,6 +1,6 @@
+use crate::maths::mat_mul;
 use crate::utils::{read_file_to_struct, read_variable_length_data};
 use bytemuck::{Pod, Zeroable};
-use rayon::prelude::*;
 use std::fs::File;
 use std::io::{self, Seek};
 use std::sync::Arc;
@@ -216,21 +216,21 @@ impl Transformer {
             let loff = l * self.config.seq_len * kv_dim;
             let kv_start = (loff + (pos * kv_dim)) as usize;
 
-            Transformer::mat_mul(
+            mat_mul(
                 &mut self.state.q,
                 &self.state.xb,
                 &self.transformer_weights.wq[(l * self.config.dim * self.config.dim) as usize..],
                 self.config.dim as usize,
             );
 
-            Transformer::mat_mul(
+            mat_mul(
                 &mut self.state.key_cache[kv_start..kv_start + kv_dim as usize],
                 &self.state.xb,
                 &self.transformer_weights.wk[(l * self.config.dim * kv_dim) as usize..],
                 self.config.dim as usize,
             );
 
-            Transformer::mat_mul(
+            mat_mul(
                 &mut self.state.value_cache[kv_start..kv_start + kv_dim as usize],
                 &self.state.xb,
                 &self.transformer_weights.wv[(l * self.config.dim * kv_dim) as usize..],
@@ -288,7 +288,7 @@ impl Transformer {
                 }
             });
 
-            Transformer::mat_mul(
+            mat_mul(
                 &mut self.state.xb2,
                 &self.state.xb,
                 &self.transformer_weights.wo[(l * self.config.dim * self.config.dim) as usize..],
@@ -305,7 +305,7 @@ impl Transformer {
                 &self.transformer_weights.rms_ffn_weight[(l * self.config.dim) as usize..],
             );
 
-            Transformer::mat_mul(
+            mat_mul(
                 &mut self.state.hb,
                 &self.state.xb,
                 &self.transformer_weights.w1
@@ -313,7 +313,7 @@ impl Transformer {
                 self.config.dim as usize,
             );
 
-            Transformer::mat_mul(
+            mat_mul(
                 &mut self.state.hb2,
                 &self.state.xb,
                 &self.transformer_weights.w3
@@ -328,7 +328,7 @@ impl Transformer {
                 self.state.hb[i] = val;
             }
 
-            Transformer::mat_mul(
+            mat_mul(
                 &mut self.state.xb,
                 &self.state.hb,
                 &self.transformer_weights.w2
@@ -347,22 +347,12 @@ impl Transformer {
             &self.transformer_weights.rms_final_weight,
         );
 
-        Transformer::mat_mul(
+        mat_mul(
             &mut self.state.logits,
             &self.state.x,
             &self.transformer_weights.wcls,
             self.config.dim as usize,
         );
-    }
-
-    fn mat_mul(o: &mut [f32], x: &[f32], w: &[f32], n: usize) {
-        o.par_iter_mut().enumerate().for_each(|(i, e)| {
-            let mut val = 0f32;
-            for j in 0..n {
-                val += w[i * n + j] * x[j];
-            }
-            *e = val;
-        });
     }
 
     fn rms_norm(o: &mut [f32], x: &[f32], weight: &[f32]) {
@@ -422,45 +412,5 @@ impl Transformer {
             .for_each(|(e, &exp_val)| {
                 *e = exp_val / sum;
             });
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    // Note this useful idiom: importing names from outer (for mod tests) scope.
-    use super::*;
-
-    #[test]
-    fn test_square_mul() {
-        let x = vec![1f32, 2f32, 3f32, 4f32];
-        let w = vec![
-            0f32, 1f32, 2f32, 3f32, 3f32, 3f32, 3f32, 3f32, 4f32, 4f32, 4f32, 4f32, 5f32, 5f32,
-            5f32, 5f32,
-        ];
-
-        let mut o = vec![0f32, 0f32, 0f32, 0f32];
-
-        let excepted_o = vec![20f32, 30f32, 40f32, 50f32];
-
-        Transformer::mat_mul(o.as_mut_slice(), x.as_slice(), w.as_slice(), 4);
-
-        assert_eq!(o, excepted_o.as_slice());
-    }
-
-    #[test]
-    fn test_nonsquare_mul() {
-        let x = vec![1f32, 2f32, 3f32, 4f32];
-        let w = vec![
-            0f32, 1f32, 2f32, 3f32, 3f32, 3f32, 3f32, 3f32, 4f32, 4f32, 4f32, 4f32, 5f32, 5f32,
-            5f32, 5f32, 6f32, 6f32, 6f32, 6f32,
-        ];
-
-        let mut o = vec![0f32, 0f32, 0f32, 0f32, 0f32];
-
-        let excepted_o = vec![20f32, 30f32, 40f32, 50f32, 60f32];
-
-        Transformer::mat_mul(o.as_mut_slice(), x.as_slice(), w.as_slice(), 4);
-
-        assert_eq!(o, excepted_o.as_slice());
     }
 }
