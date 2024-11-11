@@ -255,37 +255,38 @@ impl Transformer {
                     vec[i] = v0 * fcr - v1 * fci;
                     vec[i + 1] = v0 * fci + v1 * fcr;
                 }
-
-                // for h in 0..self.config.n_heads {
-                (0..self.config.n_heads).into_iter().for_each(|h| {
-                    let q = &self.state.q[(h * head_size) as usize..];
-                    let att = &mut self.state.att[(h * self.config.seq_len) as usize
-                        ..((h * self.config.seq_len) + pos + 1) as usize];
-                    for t in 0..=pos {
-                        let k: &[f32] = &self.state.key_cache
-                            [(loff + (t * kv_dim) + (h / kv_mul) * head_size) as usize..];
-                        let mut score =
-                            (0..head_size as usize).fold(0f32, |acc, i| acc + q[i] * k[i]);
-                        score /= (head_size as f32).sqrt();
-                        att[t as usize] = score;
-                    }
-                    Transformer::softmax(&mut att[..]);
-
-                    let xb = &mut self.state.xb
-                        [(h * head_size) as usize..((h * head_size) + head_size) as usize];
-                    xb.fill(0f32);
-
-                    for t in 0..=pos {
-                        let v = &self.state.value_cache
-                            [(loff + (t * kv_dim) + (h / kv_mul) * head_size) as usize..];
-                        let a = att[t as usize];
-
-                        for i in 0..head_size as usize {
-                            xb[i] += a * v[i];
-                        }
-                    }
-                });
             }
+
+            // for h in 0..self.config.n_heads {
+            (0..self.config.n_heads).into_iter().for_each(|h| {
+                let q =
+                    &self.state.q[(h * head_size) as usize..((h * head_size) + head_size) as usize];
+                let att = &mut self.state.att[(h * self.config.seq_len) as usize
+                    ..((h * self.config.seq_len) + pos + 1) as usize];
+                for t in 0..=pos {
+                    let start = (loff + (t * kv_dim) + (h / kv_mul) * head_size) as usize;
+                    let end = start + head_size as usize;
+                    let k: &[f32] = &self.state.key_cache[start..end];
+                    let score = q.iter().zip(k).map(|(v1, v2)| v1 * v2).sum::<f32>()
+                        / (head_size as f32).sqrt();
+                    att[t as usize] = score;
+                }
+                Transformer::softmax(&mut att[..]);
+
+                let xb = &mut self.state.xb
+                    [(h * head_size) as usize..((h * head_size) + head_size) as usize];
+                xb.fill(0f32);
+
+                for t in 0..=pos {
+                    let v = &self.state.value_cache
+                        [(loff + (t * kv_dim) + (h / kv_mul) * head_size) as usize..];
+                    let a = att[t as usize];
+
+                    for i in 0..head_size as usize {
+                        xb[i] += a * v[i];
+                    }
+                }
+            });
 
             Transformer::mat_mul(
                 &mut self.state.xb2,
