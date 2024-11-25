@@ -1,8 +1,5 @@
 use rayon::prelude::*;
-#[cfg(target_arch = "aarch64")]
-use std::arch::aarch64::*;
-#[cfg(target_arch = "x86_64")]
-use std::arch::x86_64::*;
+use std::simd::f32x4;
 
 struct CPUFeatures {
     has_avx2: bool,
@@ -11,29 +8,20 @@ struct CPUFeatures {
 
 pub fn mat_mul(o: &mut [f32], x: &[f32], w: &[f32], n: usize) {
     let cpu_features = get_cpu_features();
-    const PARALLEL_THRESHOLD: usize = 64;
-
-    if n >= PARALLEL_THRESHOLD {
-        o.par_chunks_mut(4)
-            .enumerate()
-            .for_each(|(chunk_idx, chunk)| {
-                let row_start = chunk_idx * 4;
-                chunk.iter_mut().enumerate().for_each(|(i, e)| {
-                    let row = row_start + i;
-                    unsafe {
-                        *e = if cpu_features.has_avx2 || cpu_features.has_neon {
-                            simd_dot_product(&w[row * n..], x, n)
-                        } else {
-                            dot_product_fallback(&w[row * n..], x, n)
-                        }
-                    }
-                });
+    let chunk_size = 8;
+    o.par_chunks_mut(chunk_size)
+        .enumerate()
+        .for_each(|(chunk_idx, chunk)| {
+            let row_start = chunk_idx * chunk_size;
+            chunk.iter_mut().enumerate().for_each(|(i, e)| {
+                let row = row_start + i;
+                *e = if cpu_features.has_avx2 || cpu_features.has_neon {
+                    simd_dot_product(&w[row * n..], x)
+                } else {
+                    dot_product_fallback(&w[row * n..], x)
+                }
             });
-    } else {
-        for i in 0..o.len() {
-            o[i] = dot_product_fallback(&w[i * n..], x, n);
-        }
-    }
+        });
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -52,54 +40,21 @@ fn get_cpu_features() -> CPUFeatures {
     }
 }
 
-#[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx2")]
-unsafe fn simd_dot_product(a: &[f32], b: &[f32], n: usize) -> f32 {
-    let mut sum = _mm256_setzero_ps();
-    let chunks = n / 8;
+fn simd_dot_product(a: &[f32], b: &[f32]) -> f32 {
+    use std::simd::{num::SimdFloat, StdFloat};
 
-    for i in 0..chunks {
-        let a_vec = _mm256_loadu_ps(a.as_ptr().add(i * 8));
-        let b_vec = _mm256_loadu_ps(b.as_ptr().add(i * 8));
-        sum = _mm256_add_ps(sum, _mm256_mul_ps(a_vec, b_vec));
-    }
+    // println!("{} {}", a.len(), b.len());
 
-    let sum_arr = std::mem::transmute::<__m256, [f32; 8]>(sum);
-    let mut final_sum = sum_arr.iter().sum();
-
-    for i in (chunks * 8)..n {
-        final_sum += a[i] * b[i];
-    }
-    final_sum
-}
-
-#[cfg(target_arch = "aarch64")]
-unsafe fn simd_dot_product(a: &[f32], b: &[f32], n: usize) -> f32 {
-    let mut sum = vdupq_n_f32(0f32);
-    let chunks = n / 4;
-
-    for i in 0..chunks {
-        let a_vec = vld1q_f32(a.as_ptr().add(i * 4));
-        let b_vec = vld1q_f32(b.as_ptr().add(i * 4));
-        sum = vfmaq_f32(sum, a_vec, b_vec);
-    }
-
-    let sum_arr = std::mem::transmute::<float32x4_t, [f32; 4]>(sum);
-    let mut final_sum = sum_arr.iter().sum();
-
-    for i in (chunks * 4)..n {
-        final_sum += a[i] * b[i];
-    }
-    final_sum
+    a.array_chunks::<4>()
+        .map(|&a| f32x4::from_array(a))
+        .zip(b.array_chunks::<4>().map(|&b| f32x4::from_array(b)))
+        .fold(f32x4::splat(0f32), |acc, (a, b)| a.mul_add(b, acc))
+        .reduce_sum()
 }
 
 #[inline(always)]
-fn dot_product_fallback(a: &[f32], b: &[f32], n: usize) -> f32 {
-    let mut sum = 0f32;
-    for i in 0..n {
-        sum += a[i] * b[i];
-    }
-    sum
+fn dot_product_fallback(a: &[f32], b: &[f32]) -> f32 {
+    a.iter().zip(b).fold(0f32, |acc, (a, &b)| a.mul_add(b, acc))
 }
 
 #[cfg(test)]

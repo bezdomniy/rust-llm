@@ -102,49 +102,90 @@ impl TransformerWeights {
 
         let head_size = config.dim / config.n_heads;
 
+        println!(
+            "Reading token embeddings - size: {}...",
+            config.vocab_size * config.dim
+        );
         let token_embedding_table: Arc<[f32]> = Arc::from(read_variable_length_data::<f32>(
             model_file,
             (config.vocab_size * config.dim) as usize,
         )?);
 
+        println!(
+            "Reading attention weights - size: {}...",
+            config.n_layers * config.dim
+        );
         let rms_att_weight =
             read_variable_length_data::<f32>(model_file, (config.n_layers * config.dim) as usize)?;
 
+        println!(
+            "Reading wq - size: {}...",
+            config.n_layers * config.dim * config.n_heads * head_size
+        );
         let wq = read_variable_length_data::<f32>(
             model_file,
             (config.n_layers * config.dim * config.n_heads * head_size) as usize,
         )?;
+        println!(
+            "Reading wk - size: {}...",
+            config.n_layers * config.dim * config.n_kv_heads * head_size
+        );
         let wk = read_variable_length_data::<f32>(
             model_file,
             (config.n_layers * config.dim * config.n_kv_heads * head_size) as usize,
         )?;
+        println!(
+            "Reading wv - size: {}...",
+            config.n_layers * config.dim * config.n_kv_heads * head_size
+        );
         let wv = read_variable_length_data::<f32>(
             model_file,
             (config.n_layers * config.dim * config.n_kv_heads * head_size) as usize,
         )?;
+        println!(
+            "Reading wo - size: {}...",
+            config.n_layers * config.dim * config.n_heads * head_size
+        );
         let wo = read_variable_length_data::<f32>(
             model_file,
             (config.n_layers * config.dim * config.n_heads * head_size) as usize,
         )?;
 
+        println!(
+            "Reading rms ffn weights - size: {}...",
+            config.n_layers * config.dim
+        );
         let rms_ffn_weight =
             read_variable_length_data::<f32>(model_file, (config.n_layers * config.dim) as usize)?;
 
+        println!(
+            "Reading w1 - size: {}...",
+            config.n_layers * config.dim * config.hidden_dim
+        );
         let w1 = read_variable_length_data::<f32>(
             model_file,
             (config.n_layers * config.dim * config.hidden_dim) as usize,
         )?;
 
+        println!(
+            "Reading w2 - size: {}...",
+            config.n_layers * config.dim * config.hidden_dim
+        );
         let w2 = read_variable_length_data::<f32>(
             model_file,
             (config.n_layers * config.dim * config.hidden_dim) as usize,
         )?;
 
+        println!(
+            "Reading w3 - size: {}...",
+            config.n_layers * config.dim * config.hidden_dim
+        );
         let w3 = read_variable_length_data::<f32>(
             model_file,
             (config.n_layers * config.dim * config.hidden_dim) as usize,
         )?;
 
+        println!("Reading rms final weight - size: {}...", config.dim);
         let rms_final_weight = read_variable_length_data::<f32>(model_file, (config.dim) as usize)?;
 
         model_file.seek_relative(head_size as i64)?; //skip what used to be freq_cis_real and freq_cis_imag (for RoPE)
@@ -153,6 +194,10 @@ impl TransformerWeights {
             token_embedding_table.clone()
         } else {
             let stream_position = model_file.stream_position()?;
+            println!(
+                "Reading wcls - size: {}...",
+                model_file_size - stream_position
+            );
             Arc::from(read_variable_length_data::<f32>(
                 model_file,
                 (model_file_size - stream_position) as usize,
@@ -182,11 +227,17 @@ impl Transformer {
     pub fn new(model_file_path: &str) -> io::Result<Self> {
         let mut model_file = File::open(model_file_path)?;
 
+        println!("Loading config...");
         let mut config = read_file_to_struct::<Config>(&mut model_file)?;
         println!("{:?}", config);
 
+        println!("Loading weights...");
         let transformer_weights = TransformerWeights::new(&mut model_file, &mut config)?;
+
+        println!("Initialising state...");
         let state = RunState::new(&config)?;
+
+        println!("Done.");
 
         Ok(Transformer {
             config,
@@ -321,6 +372,7 @@ impl Transformer {
                 self.config.dim as usize,
             );
 
+            // silu
             for i in 0..self.config.hidden_dim as usize {
                 let mut val = self.state.hb[i];
                 val *= 1f32 / (1f32 + (-val).exp());

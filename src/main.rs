@@ -1,3 +1,7 @@
+#![feature(array_chunks)]
+#![feature(slice_as_chunks)]
+#![feature(portable_simd)]
+
 mod maths;
 mod sampler;
 mod tokenizer;
@@ -67,7 +71,12 @@ fn generate(
 }
 
 fn main() -> io::Result<()> {
-    let mut transformer = transformer::Transformer::new("assets/stories42M.bin")?;
+    let mut transformer = transformer::Transformer::new(
+        // "assets/stories15M.bin"
+        // "assets/stories42M.bin"
+        // "assets/llama-3.2-1B-Instruct2.bin",
+        "assets/stories110M.bin",
+    )?;
 
     let vocab_size = transformer.config.vocab_size;
     let tokenizer = tokenizer::Tokenizer::new("assets/tokenizer.bin", vocab_size as u32)?;
